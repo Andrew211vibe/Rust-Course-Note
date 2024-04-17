@@ -275,7 +275,7 @@ impl Person {
 * `Deref`可以让智能指针像引用那样工作，这样你就可以写出同时支持智能指针和引用的代码，例如 `*T`
 * `Drop`允许你指定智能指针超出作用域后自动执行的代码，例如做一些数据清除等收尾工作
 
-##### 通过`*`获取引用背后的值
+##### 通过 `*`获取引用背后的值
 
 常规引用是一个指针类型，包含了目标数据存储的内存地址。对常规引用使用 `*` 操作符，就可以通过解引用的方式获取到内存地址对应的数据值
 
@@ -349,7 +349,7 @@ fn main() {
 
 `*`不会无限递归替换，从 `*y`到 `*(y.deref())`只会发生一次，而不会继续进行替换
 
-##### 函数和方法中的隐式`Deref`转换
+##### 函数和方法中的隐式 `Deref`转换
 
 对于函数和方法的传参，Rust提供了一个极其有用的隐式转换：`Deref`转换
 
@@ -370,7 +370,7 @@ fn display(s: &str) {
 * `&s`是一个 `&String`类型，当它被传给 `display`函数时，自动通过 `Deref`转换成了 `&str`
 * 必须使用 `&s`的方式来触发 `Deref`(仅引用类型的实参才会触发自动解引用)
 
-###### 连续的隐式`Deref`转换
+###### 连续的隐式 `Deref`转换
 
 `Deref` 可以支持连续的隐式转换，直到找到适合的形式为止
 
@@ -465,7 +465,7 @@ f.foo();
 (&&&&&&&&f).foo();
 ```
 
-##### 三种`Deref`转换
+##### 三种 `Deref`转换
 
 Rust还支持将一个可变的引用转换成另一个可变的引用以及将一个可变引用转换成不可变的引用
 
@@ -530,7 +530,7 @@ fn display(s: &mut String) {
 
 这样，就无需在每一个使用该变量的地方，都写一段代码来进行收尾工作和资源释放
 
-##### 一个不那么简单的`Drop`例子
+##### 一个不那么简单的 `Drop`例子
 
 ```rust
 struct HasDrop1;
@@ -581,7 +581,7 @@ fn main() {
 * **变量级别，按照逆序的方式** ，`_x`在 `_foo`之前创建，因此 `_x`在 `_foo`之后被 `drop`
 * **结构体内部，按照顺序的方式** ，结构体 `_x`中的字段按照定义中的顺序依次 `drop`
 
-###### 没有实现`Drop`的结构体
+###### 没有实现 `Drop`的结构体
 
 实际上，就算你不为 `_x`结构体实现 `Drop`特征，它内部的两个字段依然会调用 `drop`
 
@@ -634,7 +634,7 @@ fn main() {
 * 回收内存资源
 * 执行一些收尾工作
 
-##### 互斥的`Copy`和`Drop`
+##### 互斥的 `Copy`和 `Drop`
 
 无法为一个类型同时实现 `Copy` 和 `Drop` 特征
 
@@ -651,4 +651,493 @@ impl Drop for Foo {
 }
 ```
 
-#### `Rc`与`Arc`实现1vN所有权机制
+#### `Rc`与 `Arc`实现1vN所有权机制
+
+通过引用计数的方式，允许一个数据资源在同一时刻拥有多个所有者
+
+`Rc` 和 `Arc`，前者适用于单线程，后者适用于多线程
+
+##### `Rc<T>`
+
+引用计数(reference counting) -- 通过记录一个数据被引用的次数来确定该数据是否正在被使用
+
+- 当引用次数归零时，就代表该数据不再被使用，因此可以被清理释放
+
+当我们**希望在堆上分配一个对象供程序的多个部分使用且无法确定哪个部分最后一个结束时，就可以使用 `Rc` 成为数据值的所有者**
+
+```rust
+fn main() {
+    let s = String::from("hello, world");
+    // s在这里被转移给a
+    let a = Box::new(s);
+    // 报错！此处继续尝试将 s 转移给 b
+    let b = Box::new(s);
+}
+
+use std::rc::Rc;
+fn main() {
+    let a = Rc::new(String::from("hello, world"));
+    let b = Rc::clone(&a);
+    assert_eq!(2, Rc::strong_count(&a));
+    assert_eq!(Rc::strong_count(&a), Rc::strong_count(&b))
+}
+```
+
+###### `Rc::clone`
+
+使用 `Rc::clone`克隆一份智能指针 `Rc<String>`，并将该智能指针的引用计数增加
+
+> **仅仅复制了智能指针并增加了引用计数，并没有克隆底层数据** ，因此 `a` 和 `b` 是共享了底层的字符串 `s`，这种**复制效率是非常高**的
+>
+> 也可以使用 `a.clone()`的方式来克隆，更推荐 `Rc::clone`
+
+###### 观察引用计数的变化
+
+使用关联函数 `Rc::strong_count` 可以获取当前引用计数的值
+
+```rust
+use std::rc::Rc;
+fn main() {
+        let a = Rc::new(String::from("test ref counting"));
+        println!("count after creating a = {}", Rc::strong_count(&a));
+        let b =  Rc::clone(&a);
+        println!("count after creating b = {}", Rc::strong_count(&a));
+        {
+            let c =  Rc::clone(&a);
+            println!("count after creating c = {}", Rc::strong_count(&c));
+        }
+        println!("count after c goes out of scope = {}", Rc::strong_count(&a));
+}
+```
+
+* 由于变量 `c`在语句块内部声明，当离开语句块时它会因为超出作用域而被释放，所以引用计数会减少1，事实上这个得益于 `Rc<T>`实现了 `Drop`特征
+* `a`、`b`、`c`三个智能指针引用计数都是同样的，并且共享底层的数据，因此打印计数时用哪个都行
+* 无法看到的是：当 `a`、`b` 超出作用域后，引用计数会变成 0，最终智能指针和它指向的底层字符串都会被清理释放
+
+###### 不可变引用
+
+`Rc<T>`是指向底层数据的不可变的引用，因此你无法通过它来修改数据
+
+- 符合Rust的借用规则：要么存在多个不可变借用，要么只能存在一个可变借用
+
+需要对数据进行修改，这时单独使用 `Rc<T>`无法满足我们的需求，需要配合其它数据类型来一起使用
+
+- 例如内部可变性的 `RefCell<T>`类型以及互斥锁 `Mutex<T>`
+- 在多线程编程中，`Arc`跟 `Mutex`锁的组合使用非常常见，它们既可以让我们在不同的线程中共享数据，又允许在各个线程中对其进行修改
+
+###### 一个综合例子
+
+```rust
+use std::rc::Rc;
+
+struct Owner {
+    name: String,
+    // ...其它字段
+}
+
+struct Gadget {
+    id: i32,
+    owner: Rc<Owner>,
+    // ...其它字段
+}
+
+fn main() {
+    // 创建一个基于引用计数的 `Owner`.
+    let gadget_owner: Rc<Owner> = Rc::new(Owner {
+        name: "Gadget Man".to_string(),
+    });
+
+    // 创建两个不同的工具，它们属于同一个主人
+    let gadget1 = Gadget {
+        id: 1,
+        owner: Rc::clone(&gadget_owner),
+    };
+    let gadget2 = Gadget {
+        id: 2,
+        owner: Rc::clone(&gadget_owner),
+    };
+
+    // 释放掉第一个 `Rc<Owner>`
+    drop(gadget_owner);
+
+    // 尽管在上面我们释放了 gadget_owner，但是依然可以在这里使用 owner 的信息
+    // 原因是在 drop 之前，存在三个指向 Gadget Man 的智能指针引用，上面仅仅
+    // drop 掉其中一个智能指针引用，而不是 drop 掉 owner 数据，外面还有两个
+    // 引用指向底层的 owner 数据，引用计数尚未清零
+    // 因此 owner 数据依然可以被使用
+    println!("Gadget {} owned by {}", gadget1.id, gadget1.owner.name);
+    println!("Gadget {} owned by {}", gadget2.id, gadget2.owner.name);
+
+    // 在函数最后，`gadget1` 和 `gadget2` 也被释放，最终引用计数归零，随后底层
+    // 数据也被清理释放
+}
+```
+
+###### Rc简单总结
+
+* `Rc/Arc`是不可变引用，无法修改它指向的值，只能进行读取，如果要修改，需要配合后面章节的内部可变性 `RefCell`或互斥锁 `Mutex`
+* 一旦最后一个拥有者消失，则资源会自动被回收，这个生命周期是在编译期就确定下来的
+* `Rc`只能用于同一线程内部，想要用于线程之间的对象共享，你需要使用 `Arc`
+* `Rc<T>`是一个智能指针，实现了 `Deref`特征，因此你无需先解开 `Rc`指针，再使用里面的 `T`，而是可以直接使用 `T`，例如上例中的 `gadget1.owner.name`
+
+##### 多线程无力的 `Rc<T>`
+
+```rust
+use std::rc::Rc;
+use std::thread;
+
+fn main() {
+    let s = Rc::new(String::from("多线程漫游者"));
+    for _ in 0..10 {
+        let s = Rc::clone(&s);
+        let handle = thread::spawn(move || {
+           println!("{}", s)
+        });
+    }
+}
+// error[E0277]: `Rc<String>` cannot be sent between threads safely
+```
+
+- 实际上是因为它没有实现 `Send`特征，而该特征是恰恰是多线程间传递数据的关键
+- 更深层的原因：由于 `Rc<T>`需要管理引用计数，但是该计数器并没有使用任何并发原语，因此无法实现原子化的计数操作，最终会导致计数错误
+
+##### Arc
+
+`Arc`是 `Atomic Rc`的缩写：原子化的 `Rc<T>`智能指针
+
+保证数据能够安全的在线程间共享即可
+
+###### Arc的性能损耗
+
+原子化或者其它锁虽然可以带来的线程安全，但是都会伴随着性能损耗，而且这种性能损耗还不小
+
+```rust
+use std::sync::Arc;
+use std::thread;
+
+fn main() {
+    let s = Arc::new(String::from("多线程漫游者"));
+    for _ in 0..10 {
+        let s = Arc::clone(&s);
+        let handle = thread::spawn(move || {
+           println!("{}", s)
+        });
+    }
+}
+```
+
+> `Arc`和 `Rc`并没有定义在同一个模块，前者通过 `use std::sync::Arc`来引入，后者通过 `use std::rc::Rc`
+
+##### 总结
+
+> Rust为我们提供了智能指针 `Rc`和 `Arc`，使用它们就能实现多个所有者共享一个数据的功能
+>
+> `Rc`和 `Arc`的区别在于，后者是原子化实现的引用计数，因此是线程安全的，可以用于多线程中共享数据
+>
+> 这两者都是只读的，如果想要实现内部数据可修改，必须配合内部可变性 `RefCell`或者互斥锁 `Mutex`来一起使用
+
+#### `Cell`和 `RefCell`
+
+Rust提供了 `Cell`和 `RefCell`用于内部可变性，简而言之，可以在拥有不可变引用的同时修改目标数据
+
+> 内部可变性的实现是因为 Rust 使用了 `unsafe`来做到这一点，但是对于使用者来说，这些都是透明的，因为这些不安全代码都被封装到了安全的API中
+
+##### `Cell`
+
+`Cell`和 `RefCell`在功能上没有区别，区别在于 `Cell<T>`适用于 `T`实现 `Copy`的情况
+
+```rust
+use std::cell::Cell;
+fn main() {
+  let c = Cell::new("asdf");
+  let one = c.get();
+  c.set("qwer");
+  let two = c.get();
+  println!("{},{}", one, two);
+}
+```
+
+* `"asdf"`是 `&str`类型，它实现了 `Copy`特征
+* `c.get`用来取值，`c.set`用来设置新值
+
+```rust
+let c = Cell::new(String::from("asdf"));
+```
+
+- 报错：`String`没有实现 `Copy`特征
+
+##### RefCell
+
+要解决的往往是可变、不可变引用共存导致的问题，此时就需要借助于 `RefCell`来达成目的
+
+| Rust 规则                            | 智能指针带来的额外规则                    |
+| ------------------------------------ | ----------------------------------------- |
+| 一个数据只有一个所有者               | `Rc/Arc`让一个数据可以拥有多个所有者    |
+| 要么多个不可变借用，要么一个可变借用 | `RefCell`实现编译期可变、不可变引用共存 |
+| 违背规则导致**编译错误**       | 违背规则导致**运行时 `panic`**    |
+
+`RefCell`实际上并没有解决可变引用和引用可以共存的问题，只是将报错从编译期推迟到运行时，从编译器错误变成了 `panic`异常
+
+```rust
+use std::cell::RefCell;
+
+fn main() {
+    let s = RefCell::new(String::from("hello, world"));
+    let s1 = s.borrow();
+    let s2 = s.borrow_mut();
+
+    println!("{},{}", s1, s2);
+}
+```
+
+- 会因为违背了借用规则导致了运行期 `panic`
+
+###### RefCell为何存在
+
+`RefCell`正是**用于你确信代码是正确的，而编译器却发生了误判时**
+
+> 当你确信编译器误报但不知道该如何解决时，或者你有一个引用类型，需要被四处使用和修改然后导致借用关系难以管理时，都可以优先考虑使用 `RefCell`
+
+###### RefCell简单总结
+
+* 与 `Cell`用于可 `Copy`的值不同，`RefCell`用于引用
+* `RefCell`只是将借用规则从编译期推迟到程序运行期，并不能帮你绕过这个规则
+* `RefCell`适用于编译期误报或者一个引用被在多处代码使用、修改以至于难于管理借用关系时
+* 使用 `RefCell`时，违背借用规则会导致运行期的 `panic`
+
+##### 选择 `Cell`还是 `RefCell`
+
+* `Cell` 只适用于 `Copy` 类型，用于提供值，而 `RefCell` 用于提供引用
+* `Cell` 不会 `panic`，而 `RefCell` 会
+
+###### 性能比较
+
+`Cell` 没有额外的性能损耗
+
+```rust
+// code snipet 1
+let x = Cell::new(1);
+let y = &x;
+let z = &x;
+x.set(2);
+y.set(3);
+z.set(4);
+println!("{}", x.get());
+
+// code snipet 2
+let mut x = 1;
+let y = &mut x;
+let z = &mut x;
+x = 2;
+*y = 3;
+*z = 4;
+println!("{}", x);
+```
+
+- 虽然性能一致，但代码 `1` 拥有代码 `2` 不具有的优势：它能编译成功:)
+- 与 `Cell`的 `zero cost`不同，`RefCell` 其实是有一点运行期开销的，原因是它包含了一个字节大小的“借用状态”指示器
+  - 指示器在每次运行时借用时都会被修改，进而产生一点开销
+- 当非要使用内部可变性时，首选 `Cell`，只有你的类型没有实现 `Copy`时，才去选择 `RefCell`
+
+##### 内部可变性
+
+对一个不可变的值进行可变借用，但这个并不符合Rust的基本借用规则，可以对一个可变值进行不可变借用
+
+> 原因是：当值不可变时，可能会有多个不可变的引用指向它，此时若将其中一个修改为可变的，会造成可变引用与不可变引用共存的情况；而当值可变时，最多只会有一个可变引用指向它，将其修改为不可变，那么最终依然是只有一个不可变的引用指向它
+
+```rust
+use std::cell::RefCell;
+pub trait Messenger {
+    fn send(&self, msg: String);
+}
+
+pub struct MsgQueue {
+    msg_cache: RefCell<Vec<String>>,
+}
+
+impl Messenger for MsgQueue {
+    fn send(&self, msg: String) {
+        self.msg_cache.borrow_mut().push(msg)
+    }
+}
+
+fn main() {
+    let mq = MsgQueue {
+        msg_cache: RefCell::new(Vec::new()),
+    };
+    mq.send("hello, world".to_string());
+}
+```
+
+通过包裹一层 `RefCell`，成功的让 `&self`中的 `msg_cache`成为一个可变值，然后实现对其的修改
+
+##### Rc + RefCell组合使用
+
+`Rc`和 `RefCell`在一起使用，前者可以实现一个数据拥有多个所有者，后者可以实现数据的可变性
+
+```rust
+use std::cell::RefCell;
+use std::rc::Rc;
+fn main() {
+    let s = Rc::new(RefCell::new("我很善变，还拥有多个主人".to_string()));
+
+    let s1 = s.clone();
+    let s2 = s.clone();
+    // let mut s2 = s.borrow_mut();
+    s2.borrow_mut().push_str(", oh yeah!");
+
+    println!("{:?}\n{:?}\n{:?}", s, s1, s2);
+}
+
+```
+
+- 使用 `RefCell<String>`包裹一个字符串，同时通过 `Rc`创建了它的三个所有者：`s`、`s1`和 `s2`，并且通过其中一个所有者 `s2`对字符串内容进行了修改
+- 由于 `Rc`的所有者们共享同一个底层的数据，因此当一个所有者修改了数据时，会导致全部所有者持有的数据都发生了变化
+
+###### 性能损耗
+
+> 大致相当于没有线程安全版本的 C++ `std::shared_ptr` 指针，事实上，C++ 这个指针的主要开销也在于原子性这个并发原语上，毕竟线程安全在哪个语言中开销都不小
+
+###### 内存损耗
+
+两者结合的数据结构与下面类似
+
+```rust
+struct Wrapper<T> {
+    // Rc
+    strong_count: usize,
+    weak_count: usize,
+    // Refcell
+    borrow_count: isize,
+    // 包裹的数据
+    item: T,
+}
+```
+
+- 从对内存的影响来看，仅仅多分配了三个 `usize/isize`，并没有其它额外的负担
+
+###### CPU损耗
+
+从CPU来看，损耗如下：
+
+* 对 `Rc<T>`解引用是免费的（编译期），但是 `*`带来的间接取值并不免费
+* 克隆 `Rc<T>`需要将当前的引用计数跟 `0`和 `usize::Max`进行一次比较，然后将计数值加1
+* 释放（drop） `Rc<T>`需要将计数值减1， 然后跟 `0`进行一次比较
+* 对 `RefCell`进行不可变借用，需要将 `isize`类型的借用计数加1，然后跟 `0`进行比较
+* 对 `RefCell`的不可变借用进行释放，需要将 `isize`减 1
+* 对 `RefCell`的可变借用大致流程跟上面差不多，但是需要先跟 `0`比较，然后再减1
+* 对 `RefCell`的可变借用进行释放，需要将 `isize`加 1
+
+CPU消耗也非常低，甚至编译器还会对此进行进一步优化！
+
+###### CPU缓存Miss
+
+对于CPU缓存是否亲和
+
+* 从表面来看，它们带来的内存和CPU损耗都不大
+* 但是由于 `Rc`额外的引入了一次间接取值（`*`），在少数场景下可能会造成性能上的显著损失
+* CPU缓存可能也不够亲和
+
+##### 通过 `Cell::from_mut`解决借用冲突
+
+这两个方法可以很方便的帮我们把 `&mut [T]`类型转换成 `&[Cell<T>]`类型
+
+* `Cell::from_mut`，该方法将 `&mut T`转为 `&Cell<T>`
+* `Cell::as_slice_of_cells`，该方法将 `&Cell<[T]>`转为 `&[Cell<T>]`
+
+```rust
+fn is_even(i: i32) -> bool {
+    i % 2 == 0
+}
+
+fn retain_even(nums: &mut Vec<i32>) {
+    let mut i = 0;
+    for num in nums.iter().filter(|&num| is_even(*num)) {
+        nums[i] = *num;
+        i += 1;
+    }
+    nums.truncate(i);
+}
+```
+
+- 报错是因为同时借用了不可变与可变引用，你可以通过索引的方式来避免这个问题
+
+```rust
+fn retain_even(nums: &mut Vec<i32>) {
+    let mut i = 0;
+    for j in 0..nums.len() {
+        if is_even(nums[j]) {
+            nums[i] = nums[j];
+            i += 1;
+        }
+    }
+    nums.truncate(i);
+}
+```
+
+可以使用 `Cell`
+
+```rust
+use std::cell::Cell;
+
+fn retain_even(nums: &mut Vec<i32>) {
+    let slice: &[Cell<i32>] = Cell::from_mut(&mut nums[..])
+        .as_slice_of_cells();
+
+    let mut i = 0;
+    for num in slice.iter().filter(|num| is_even(num.get())) {
+        slice[i].set(num.get());
+        i += 1;
+    }
+
+    nums.truncate(i);
+}
+```
+
+- `Cell`上的 `set`方法获取的是不可变引用 `pub fn set(&self, val: T)`
+
+##### 总结
+
+> `Cell`和 `RefCell`都为我们带来了内部可变性这个重要特性，同时还将借用规则的检查从编译期推迟到运行期，但是这个检查并不能被绕过，该来早晚还是会来，`RefCell`在运行期的报错会造成 `panic`
+>
+> `RefCell`适用于编译器误报或者一个引用被在多个代码中使用、修改以至于难于管理借用关系时，还有就是需要内部可变性时
+>
+> 从性能上看，`RefCell`由于是非线程安全的，因此无需保证原子性，性能虽然有一点损耗，但是依然非常好，而 `Cell`则完全不存在任何额外的性能损耗
+
+```rust
+use std::cell::Cell;
+
+struct Bank {
+    balance: Cell<i32>,
+}
+
+impl Bank {
+    fn new() -> Bank {
+        Bank { balance: Cell::new(0) }
+    }
+
+    fn deposit(&self, amount: i32) {
+        self.balance.set(self.balance.get() + amount);
+    }
+
+    fn withdraw(&self, amount: i32) -> bool {
+        if self.balance.get() >= amount {
+            self.balance.set(self.balance.get() - amount);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn main() {
+    let bank = Bank::new();
+    bank.deposit(100);
+    assert!(bank.withdraw(50));
+    assert_eq!(bank.balance.get(), 50);
+}
+```
+
+> 由于 `Rust` 的 `mutable` 特性，一个结构体中的字段，要么全都是 `immutable`，要么全部是 `mutable`， **不支持针对部分字段进行设置** 。比如，在一个 `struct` 中， **可能只有个别的字段需要修改，而其他字段并不需要修改** ，为了一个字段而将整个 `struct` 变为 `&mut` 也是不合理的。
+>
+> 所以，实现 **内部可变性** 的 `Cell` 和 `RefCell` 正是为了解决诸如这类问题存在的，通过它们可以实现 `struct` 部分字段可变，而不用将整个 `struct` 设置为 `mutable`
